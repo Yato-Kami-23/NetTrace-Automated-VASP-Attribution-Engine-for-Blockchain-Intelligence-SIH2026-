@@ -25,12 +25,12 @@ with st.sidebar:
 
 # ---------- Run the trace ----------
 if run_trace and address:
-    with st.spinner("Tracing transaction path..."):
+    with st.spinner("Tracing transaction path — this can take a while on busy wallets, please wait..."):
         try:
             resp = requests.post(
                 f"{API_URL}/trace",
                 json={"address": address, "max_hops": max_hops},
-                timeout=60
+                timeout=600
             )
             resp.raise_for_status()
             result = resp.json()

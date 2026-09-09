@@ -11,16 +11,22 @@ from fetcher import fetch_transactions
 from attribution import lookup_known_address
 
 
-def trace_path(start_address: str, max_hops: int = 4):
+def trace_path(start_address: str, max_hops: int = 4, branch_limit: int = None, max_api_calls: int = 500):
     """
     BFS outward from start_address. At each new address, check if it's
     a known labeled entity. Stop at first match.
+
+    branch_limit: None = follow all transactions found per address (no cap).
+    max_api_calls: generous safety ceiling only, so a trace can never hang
+    forever — not meant to actually be hit in normal use.
+
     Returns: {found, path, hops, hit_mixer}
     """
     graph = nx.DiGraph()
     visited = set()
     queue = [(start_address, [start_address], 0)]
     hit_mixer = False
+    api_calls_made = 0
 
     while queue:
         current, path, hops = queue.pop(0)
@@ -42,8 +48,17 @@ def trace_path(start_address: str, max_hops: int = 4):
                     "hit_mixer": hit_mixer
                 }
 
+        if api_calls_made >= max_api_calls:
+            # Hit the safety ceiling — stop expanding further, return best-effort result
+            break
+
         txs = fetch_transactions(current)
-        for tx in txs:
+        api_calls_made += 1
+
+        # Only follow the top `branch_limit` transactions from this address
+        # if a limit is set — otherwise follow every transaction found
+        txs_to_follow = txs[:branch_limit] if branch_limit else txs
+        for tx in txs_to_follow:
             graph.add_edge(tx["from"], tx["to"])
             if tx["to"] not in visited:
                 queue.append((tx["to"], path + [tx["to"]], hops + 1))
