@@ -11,78 +11,112 @@ SETUP REQUIRED:
 import requests
 import time
 
-ETHERSCAN_API_KEY = "YOUR_ETHERSCAN_API_KEY_HERE"  # <-- paste your free key here
+ETHERSCAN_API_KEY = "W87Y8TD9NB1T3S7AY28135PC4ZKY1D62YR"  # <-- paste your free key here
 ETHERSCAN_BASE_URL = "https://api.etherscan.io/v2/api"  # V2 endpoint (V1 was retired)
 ETHERSCAN_CHAIN_ID = 1  # 1 = Ethereum mainnet (V2 is multichain, needs this param)
 BLOCKSTREAM_BASE_URL = "https://blockstream.info/api"
 
+# Tracks chains that have failed repeatedly during THIS run, so we stop
+# wasting time retrying a chain that's clearly not responding (rate-limited,
+# down, etc.) instead of hitting it again on every single hop.
+_chain_failure_counts = {}
+_disabled_chains = set()
+FAILURE_THRESHOLD = 3  # after this many failures, stop trying that chain
 
-def fetch_transactions(address: str, chain: str = "eth"):
+
+def _record_chain_failure(chain_name: str):
+    _chain_failure_counts[chain_name] = _chain_failure_counts.get(chain_name, 0) + 1
+    if _chain_failure_counts[chain_name] >= FAILURE_THRESHOLD and chain_name not in _disabled_chains:
+        _disabled_chains.add(chain_name)
+        print(f"[fetcher] {chain_name} failed {FAILURE_THRESHOLD}+ times — skipping it for the rest of this trace.")
+
+
+def reset_chain_failures():
+    """Call this before starting a new trace, so a fresh run doesn't
+    inherit skip-decisions from a previous trace."""
+    _chain_failure_counts.clear()
+    _disabled_chains.clear()
+
+
+def fetch_transactions(address: str, chain: str = "auto"):
     """
-    Returns a list of transactions FROM the given address, normalized to:
+    Returns a list of transactions FROM/TO the given address, normalized to:
     {from, to, amount, timestamp, tx_hash, chain}
+
+    ETHEREUM ONLY for now — Bitcoin/BSC/Polygon support still exists in the
+    functions below (call them directly via chain="btc"/"bsc"/"polygon" if
+    needed) but "auto" is temporarily restricted to just Ethereum to keep
+    trace times fast. Re-enable multi-chain fallback later by restoring
+    the loop that was here.
     """
-    if chain == "eth":
-        return _fetch_eth_transactions(address)
+    if chain == "auto":
+        if "Ethereum" in _disabled_chains:
+            return []
+        return _fetch_evm_transactions(address, 1, "Ethereum")
+    elif chain == "eth":
+        return _fetch_evm_transactions(address, 1, "Ethereum")
+    elif chain == "bsc":
+        return _fetch_evm_transactions(address, 56, "BNB Chain")
+    elif chain == "polygon":
+        return _fetch_evm_transactions(address, 137, "Polygon")
     elif chain == "btc":
         return _fetch_btc_transactions(address)
     else:
         raise ValueError(f"Unsupported chain: {chain}")
 
 
-def _fetch_eth_transactions(address: str, max_txs: int = 25):
-    """Pulls normal ETH transactions for an address via Etherscan.
-    Capped to the most recent max_txs to avoid exponential blowup
-    when tracing multiple hops outward from a busy wallet."""
+EVM_CHAINS = {
+    1: "Ethereum",
+    56: "BNB Chain",
+    137: "Polygon",
+}
+
+
+def _fetch_evm_transactions(address: str, chain_id: int, chain_name: str, max_txs: int = 25):
+    """Pulls transactions for an address on any EVM chain via Etherscan V2."""
     params = {
-        "chainid": ETHERSCAN_CHAIN_ID,
+        "chainid": chain_id,
         "module": "account",
         "action": "txlist",
         "address": address,
         "startblock": 0,
         "endblock": 99999999,
-        "sort": "desc",  # newest first, so the cap keeps the most recent activity
+        "sort": "desc",
         "page": 1,
-        "offset": max_txs,  # tells Etherscan to only return this many results
+        "offset": max_txs,
         "apikey": ETHERSCAN_API_KEY,
     }
     try:
-        time.sleep(0.25)  # stay under Etherscan's 5 calls/sec free-tier limit
-        resp = requests.get(ETHERSCAN_BASE_URL, params=params, timeout=10)
+        time.sleep(0.21)  # Etherscan free tier = 5 calls/sec max; 0.2s keeps us just under that
+        resp = requests.get(ETHERSCAN_BASE_URL, params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
     except (requests.RequestException, ValueError) as e:
-        print(f"[fetcher] Etherscan request failed for {address}: {e}")
+        print(f"[fetcher] {chain_name} request failed for {address}: {e}")
+        _record_chain_failure(chain_name)
         return []
 
     if data.get("status") != "1":
-        # status "0" means no transactions found or an API error/rate-limit
         return []
 
     txs = []
     for tx in data.get("result", []):
-        # Skip zero-value transactions with no meaningful transfer
-        # (these are often on-chain messages/spam, not real fund movement)
         if int(tx["value"]) == 0:
             continue
-
-        # Determine which side is "this address" and follow the OTHER side —
-        # money can arrive at a wallet too, and for investigation purposes
-        # we still want to see who it's connected to, not just outgoing sends
         if tx["from"].lower() == address.lower():
             other_party = tx["to"]
         elif tx["to"].lower() == address.lower():
             other_party = tx["from"]
         else:
-            continue  # shouldn't happen, but skip defensively
+            continue
 
         txs.append({
             "from": address,
             "to": other_party,
-            "amount": int(tx["value"]) / 1e18,  # wei -> ETH
+            "amount": int(tx["value"]) / 1e18,
             "timestamp": tx["timeStamp"],
             "tx_hash": tx["hash"],
-            "chain": "eth"
+            "chain": chain_name  # <-- tags which chain this transaction happened on
         })
     return txs
 
@@ -96,6 +130,7 @@ def _fetch_btc_transactions(address: str):
         data = resp.json()
     except (requests.RequestException, ValueError) as e:
         print(f"[fetcher] Blockstream request failed for {address}: {e}")
+        _record_chain_failure("Bitcoin")
         return []
 
     txs = []
@@ -114,7 +149,7 @@ def _fetch_btc_transactions(address: str):
                     "amount": amount_sats / 1e8,  # sats -> BTC
                     "timestamp": timestamp,
                     "tx_hash": tx_hash,
-                    "chain": "btc"
+                    "chain": "Bitcoin"
                 })
     return txs
 

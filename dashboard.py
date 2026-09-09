@@ -20,17 +20,19 @@ st.caption("Trace a suspect wallet to the nearest known exchange / VASP")
 with st.sidebar:
     st.header("Trace a Wallet")
     address = st.text_input("Wallet address", placeholder="0x...")
-    max_hops = st.slider("Max hops to search", min_value=1, max_value=10, value=4)
+    st.caption("No hop limit — search runs until every reachable address "
+               "has been checked. This can take a while on very active wallets.")
     run_trace = st.button("Run Trace", type="primary", use_container_width=True)
 
 # ---------- Run the trace ----------
 if run_trace and address:
-    with st.spinner("Tracing transaction path — this can take a while on busy wallets, please wait..."):
+    with st.spinner("Tracing transaction path — no hop limit, this may take "
+                     "several minutes on busy wallets, please wait..."):
         try:
             resp = requests.post(
                 f"{API_URL}/trace",
-                json={"address": address, "max_hops": max_hops},
-                timeout=600
+                json={"address": address, "max_hops": None},
+                timeout=None  # no timeout — let it run as long as the search needs
             )
             resp.raise_for_status()
             result = resp.json()

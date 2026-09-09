@@ -7,65 +7,108 @@ fetch_transactions() and lookup_known_address() from the other files.
 """
 
 import networkx as nx
-from fetcher import fetch_transactions
+from fetcher import fetch_transactions, reset_chain_failures
 from attribution import lookup_known_address
 
 
-def trace_path(start_address: str, max_hops: int = 4, branch_limit: int = None, max_api_calls: int = 500):
+def trace_path(start_address: str, max_hops: int = None, branch_limit: int = None,
+                max_api_calls: int = 2000, stop_flag=None, progress_callback=None):
     """
-    BFS outward from start_address. At each new address, check if it's
-    a known labeled entity. Stop at first match.
+    BFS outward from start_address, exploring ALL branches (not stopping
+    at the first match) so every reachable VASP gets reported.
 
-    branch_limit: None = follow all transactions found per address (no cap).
-    max_api_calls: generous safety ceiling only, so a trace can never hang
-    forever — not meant to actually be hit in normal use.
+    max_hops: None = no hop limit.
+    max_api_calls: safety ceiling.
+    stop_flag: optional threading.Event — if set() while running, the
+    search stops early and returns whatever it found so far.
+    progress_callback: optional function(nodes_explored, current_address)
+    called on every node visited, so a caller can show live progress.
 
-    Returns: {found, path, hops, hit_mixer}
+    Returns: {
+        matches: [ {found, path, hops, chain, hit_mixer}, ... ],
+        all_paths_explored: int,
+        hit_mixer: bool,
+        stopped_early: bool
+    }
     """
-    graph = nx.DiGraph()
     visited = set()
-    queue = [(start_address, [start_address], 0)]
-    hit_mixer = False
+    reset_chain_failures()
+    queue = [(start_address, [start_address], 0, [])]
+    matches = []
+    hit_mixer_overall = False
     api_calls_made = 0
+    paths_explored = 0
+    stopped_early = False
 
     while queue:
-        current, path, hops = queue.pop(0)
+        if stop_flag is not None and stop_flag.is_set():
+            stopped_early = True
+            break
 
-        if current in visited or hops > max_hops:
+        current, path, hops, chain_trail = queue.pop(0)
+
+        if current in visited:
+            continue
+        if max_hops is not None and hops > max_hops:
             continue
         visited.add(current)
+        paths_explored += 1
+
+        if progress_callback:
+            progress_callback(paths_explored, current)
 
         match = lookup_known_address(current)
         if match and current != start_address:
             if match["entity_type"] == "mixer":
-                hit_mixer = True
-                # don't stop here — keep tracing past the mixer
+                hit_mixer_overall = True
             else:
-                return {
+                matches.append({
                     "found": match,
                     "path": path,
                     "hops": hops,
-                    "hit_mixer": hit_mixer
-                }
+                    "chain": chain_trail[-1] if chain_trail else "unknown",
+                })
+                continue
 
         if api_calls_made >= max_api_calls:
-            # Hit the safety ceiling — stop expanding further, return best-effort result
             break
 
         txs = fetch_transactions(current)
         api_calls_made += 1
 
-        # Only follow the top `branch_limit` transactions from this address
-        # if a limit is set — otherwise follow every transaction found
         txs_to_follow = txs[:branch_limit] if branch_limit else txs
         for tx in txs_to_follow:
-            graph.add_edge(tx["from"], tx["to"])
             if tx["to"] not in visited:
-                queue.append((tx["to"], path + [tx["to"]], hops + 1))
+                queue.append((
+                    tx["to"],
+                    path + [tx["to"]],
+                    hops + 1,
+                    chain_trail + [tx["chain"]]
+                ))
 
     return {
-        "found": None,
-        "path": path,
-        "hops": hops,
-        "hit_mixer": hit_mixer
+        "matches": matches,
+        "all_paths_explored": paths_explored,
+        "hit_mixer": hit_mixer_overall,
+        "stopped_early": stopped_early
     }
+
+
+def trace_nearest(start_address: str, max_hops: int = None, branch_limit: int = None,
+                   max_api_calls: int = 2000, stop_flag=None, progress_callback=None):
+    """Convenience wrapper — picks the lowest-hop match from the full trace."""
+    result = trace_path(start_address, max_hops, branch_limit, max_api_calls, stop_flag, progress_callback)
+    if not result["matches"]:
+        return {
+            "found": None,
+            "path": [start_address],
+            "hops": 0,
+            "hit_mixer": result["hit_mixer"],
+            "chain": None,
+            "stopped_early": result["stopped_early"]
+        }
+
+    nearest = min(result["matches"], key=lambda m: m["hops"])
+    nearest["hit_mixer"] = result["hit_mixer"]
+    nearest["stopped_early"] = result["stopped_early"]
+    return nearest
