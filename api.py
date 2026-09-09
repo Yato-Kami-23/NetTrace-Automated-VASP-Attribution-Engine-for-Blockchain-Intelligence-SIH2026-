@@ -70,10 +70,55 @@ def _run_trace_job(job_id: str, address: str, max_hops):
         "total_matches_found": len(enriched_matches),
         "total_paths_explored": result["all_paths_explored"],
         "hit_mixer_anywhere": result["hit_mixer"],
+        "mixer_hits": result["mixer_hits"],
         "stopped_early": result["stopped_early"],
         "matches": enriched_matches,
         "report": report_text
     }
+
+
+def format_mixer_section(mixer_hits):
+    """
+    NEW: explains what a mixer IS in plain language, then lists exactly
+    which mixer(s) were found, at what address, on what chain, and how
+    far from the suspect wallet — instead of a bare YES/NO flag.
+    """
+    lines = []
+    if not mixer_hits:
+        lines.append("Mixer/tumbler detected: No")
+        lines.append("")
+        return "\n".join(lines)
+
+    lines.append("Mixer/tumbler detected: YES")
+    lines.append("")
+    lines.append("What this means:")
+    lines.append("  A mixer (also called a 'tumbler') is a service designed to break")
+    lines.append("  the traceable link between a sender and a receiver. It pools funds")
+    lines.append("  from many different users together and pays back out from that")
+    lines.append("  shared pool, so it's no longer possible to prove which incoming")
+    lines.append("  deposit corresponds to which outgoing withdrawal. Investigators")
+    lines.append("  treat any path that touches a mixer as higher-risk, since it is")
+    lines.append("  a common technique used to obscure the origin of illicit funds.")
+    lines.append("")
+    lines.append(f"Specific mixer(s) found in this search ({len(mixer_hits)}):")
+    for hit in mixer_hits:
+        lines.append(
+            f"  - \"{hit['label']}\" at address {hit['address']} "
+            f"(chain: {hit['chain']}, {hit['hop']} hop(s) from suspect wallet)"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _mixer_on_this_path(match_path, mixer_hits):
+    """
+    NEW: checks whether any mixer address actually appears on THIS
+    specific match's path, rather than assuming every match is affected
+    just because a mixer was found somewhere in the wider search.
+    """
+    path_lower = {a.lower() for a in match_path}
+    hits_on_path = [h for h in mixer_hits if h["address"].lower() in path_lower]
+    return hits_on_path
 
 
 def generate_multi_match_report(wallet, matches, raw_result):
@@ -84,6 +129,8 @@ def generate_multi_match_report(wallet, matches, raw_result):
     flags, so an investigator (or a court) can see how the system
     reached its conclusion, not just the conclusion itself.
     """
+    mixer_hits = raw_result.get("mixer_hits", [])
+
     lines = []
     lines.append("=" * 60)
     lines.append("BLOCKCHAIN WALLET ATTRIBUTION REPORT")
@@ -91,11 +138,13 @@ def generate_multi_match_report(wallet, matches, raw_result):
     lines.append(f"Suspect wallet: {wallet}")
     lines.append(f"Total addresses explored: {raw_result['all_paths_explored']}")
     lines.append(f"Total VASP matches found: {len(matches)}")
-    lines.append(f"Mixer/tumbler detected anywhere in search: {'YES' if raw_result['hit_mixer'] else 'No'}")
+    lines.append("")
+    lines.append(format_mixer_section(mixer_hits))  # NEW: detailed section, not one line
+
     if raw_result.get("stopped_early"):
         lines.append("NOTE: search was stopped early by the investigator — "
                       "results reflect a partial trace, not an exhaustive one.")
-    lines.append("")
+        lines.append("")
 
     if not matches:
         lines.append("No known VASP was found within the search scope.")
@@ -116,6 +165,9 @@ def generate_multi_match_report(wallet, matches, raw_result):
         lines.append(f"Confidence score: {m['confidence_score']}/100")
         lines.append("")
 
+        # --- Check if a mixer is actually ON this specific path ---
+        mixer_on_path = _mixer_on_this_path(m["path"], mixer_hits)
+
         # --- Explain WHY this confidence score, in plain language ---
         lines.append("Why this score:")
         if m["hop_count"] <= 1:
@@ -127,9 +179,16 @@ def generate_multi_match_report(wallet, matches, raw_result):
             lines.append("    before reaching this VASP. Each additional hop slightly")
             lines.append("    lowers confidence, since more intermediaries mean more")
             lines.append("    opportunity for funds to have mixed with other sources.")
-        if raw_result["hit_mixer"]:
-            lines.append("  - A known mixer/tumbler was encountered somewhere in the")
-            lines.append("    broader search, which reduces overall trace reliability.")
+        if mixer_on_path:
+            for hit in mixer_on_path:
+                lines.append(f"  - This specific path passed through the mixer")
+                lines.append(f"    \"{hit['label']}\" ({hit['address']}) at hop {hit['hop']},")
+                lines.append("    which lowers confidence since funds may have been")
+                lines.append("    pooled with unrelated deposits at that point.")
+        elif mixer_hits:
+            lines.append("  - Note: a mixer was found elsewhere in the broader search,")
+            lines.append("    but NOT on this specific path — this match's own trail")
+            lines.append("    is clean of mixer exposure.")
         lines.append("")
 
         # --- Risk flags, explained ---
@@ -157,7 +216,10 @@ def generate_multi_match_report(wallet, matches, raw_result):
         # --- Full path, for audit trail ---
         lines.append("Full transaction path (suspect wallet -> VASP):")
         for j, addr in enumerate(m["path"]):
-            lines.append(f"  {j}. {addr}")
+            marker = ""
+            if mixer_on_path and any(addr.lower() == h["address"].lower() for h in mixer_on_path):
+                marker = "   <-- MIXER"
+            lines.append(f"  {j}. {addr}{marker}")
         lines.append("")
 
     lines.append("=" * 60)
@@ -233,6 +295,7 @@ def trace(request: TraceRequest):
         "risk_flags": risk_flags,
         "typologies": typologies,
         "alert": alert,
+        "mixer_hits": result.get("mixer_hits", []),
         "report": report_text
     }
 
@@ -267,6 +330,7 @@ def trace_all(request: TraceRequest):
         "total_matches_found": len(enriched_matches),
         "total_paths_explored": result["all_paths_explored"],
         "hit_mixer_anywhere": result["hit_mixer"],
+        "mixer_hits": result.get("mixer_hits", []),
         "matches": enriched_matches
     }
 
@@ -304,6 +368,8 @@ def generate_report(wallet, result, confidence, risk_flags):
         lines.append(f"Confidence score: {confidence}/100")
 
     lines.append("")
+    lines.append(format_mixer_section(result.get("mixer_hits", [])))
+
     lines.append("Transaction path:")
     for i, addr in enumerate(result["path"]):
         lines.append(f"  {i}. {addr}")

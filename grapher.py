@@ -25,9 +25,10 @@ def trace_path(start_address: str, max_hops: int = None, branch_limit: int = Non
     called on every node visited, so a caller can show live progress.
 
     Returns: {
-        matches: [ {found, path, hops, chain, hit_mixer}, ... ],
+        matches: [ {found, path, hops, chain}, ... ],
         all_paths_explored: int,
-        hit_mixer: bool,
+        hit_mixer: bool,                # kept for backward compatibility
+        mixer_hits: [ {address, label, hop, chain}, ... ],  # NEW: full detail
         stopped_early: bool
     }
     """
@@ -35,7 +36,7 @@ def trace_path(start_address: str, max_hops: int = None, branch_limit: int = Non
     reset_chain_failures()
     queue = [(start_address, [start_address], 0, [])]
     matches = []
-    hit_mixer_overall = False
+    mixer_hits = []  # NEW: records WHICH mixer, WHERE, and on what chain
     api_calls_made = 0
     paths_explored = 0
     stopped_early = False
@@ -60,7 +61,14 @@ def trace_path(start_address: str, max_hops: int = None, branch_limit: int = Non
         match = lookup_known_address(current)
         if match and current != start_address:
             if match["entity_type"] == "mixer":
-                hit_mixer_overall = True
+                # NEW: record the specific mixer hit instead of just a flag
+                mixer_hits.append({
+                    "address": current,
+                    "label": match["label"],
+                    "hop": hops,
+                    "chain": chain_trail[-1] if chain_trail else "unknown",
+                    "path_to_mixer": path
+                })
             else:
                 matches.append({
                     "found": match,
@@ -89,7 +97,8 @@ def trace_path(start_address: str, max_hops: int = None, branch_limit: int = Non
     return {
         "matches": matches,
         "all_paths_explored": paths_explored,
-        "hit_mixer": hit_mixer_overall,
+        "hit_mixer": len(mixer_hits) > 0,
+        "mixer_hits": mixer_hits,
         "stopped_early": stopped_early
     }
 
@@ -104,11 +113,13 @@ def trace_nearest(start_address: str, max_hops: int = None, branch_limit: int = 
             "path": [start_address],
             "hops": 0,
             "hit_mixer": result["hit_mixer"],
+            "mixer_hits": result["mixer_hits"],
             "chain": None,
             "stopped_early": result["stopped_early"]
         }
 
     nearest = min(result["matches"], key=lambda m: m["hops"])
     nearest["hit_mixer"] = result["hit_mixer"]
+    nearest["mixer_hits"] = result["mixer_hits"]
     nearest["stopped_early"] = result["stopped_early"]
     return nearest

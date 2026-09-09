@@ -75,10 +75,32 @@ if st.session_state.get("job_id") and not st.session_state.get("result"):
 if st.session_state.get("result"):
     result = st.session_state["result"]
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     col1.metric("Nodes Explored", result["total_paths_explored"])
     col2.metric("VASPs Found", result["total_matches_found"])
-    col3.metric("Mixer Detected", "Yes ⚠️" if result["hit_mixer_anywhere"] else "No ✅")
+
+    # ---------- Mixer detail section (replaces the old plain Yes/No metric) ----------
+    mixer_hits = result.get("mixer_hits", [])
+    if mixer_hits:
+        st.error(f"⚠️ Mixer/tumbler detected — {len(mixer_hits)} found in this search")
+        with st.expander("What is a mixer? / See details", expanded=True):
+            st.markdown(
+                "A **mixer (tumbler)** is a service designed to break the traceable "
+                "link between a sender and a receiver. It pools funds from many "
+                "different users together and pays back out from that shared pool, "
+                "so it's no longer possible to prove which incoming deposit "
+                "corresponds to which outgoing withdrawal. Its presence on a trace "
+                "is a red flag commonly associated with efforts to obscure the "
+                "origin of funds."
+            )
+            st.write("**Specific mixer(s) found:**")
+            for hit in mixer_hits:
+                st.write(
+                    f"- **{hit['label']}** at `{hit['address']}` "
+                    f"(chain: {hit['chain']}, {hit['hop']} hop(s) from suspect wallet)"
+                )
+    else:
+        st.success("✅ No mixer/tumbler detected anywhere in this search")
 
     st.divider()
 
@@ -92,6 +114,17 @@ if st.session_state.get("result"):
             ):
                 st.write(f"**Source chain:** {m['source_chain']}")
                 st.write(f"**Confidence:** {m['confidence_score']}/100")
+
+                # Show whether a mixer sits specifically on THIS path
+                path_lower = {a.lower() for a in m["path"]}
+                mixer_on_this_path = [h for h in mixer_hits if h["address"].lower() in path_lower]
+                if mixer_on_this_path:
+                    for hit in mixer_on_this_path:
+                        st.warning(
+                            f"⚠️ This path passes through mixer **{hit['label']}** "
+                            f"at hop {hit['hop']} ({hit['address']})"
+                        )
+
                 if m.get("typologies"):
                     st.write("**Suspected typology:**")
                     for t in m["typologies"]:
@@ -100,7 +133,8 @@ if st.session_state.get("result"):
                     st.warning(f"{m['alert']['level']}: {m['alert']['message']}")
                 st.write("**Path:**")
                 for j, addr in enumerate(m["path"]):
-                    st.text(f"  {j}. {addr}")
+                    marker = " ⚠️ MIXER" if any(addr.lower() == h["address"].lower() for h in mixer_on_this_path) else ""
+                    st.text(f"  {j}. {addr}{marker}")
                 if m["risk_flags"]:
                     st.error("Risk flags:")
                     for flag in m["risk_flags"]:
