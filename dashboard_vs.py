@@ -12,7 +12,7 @@ import streamlit as st
 import requests
 import time
 
-API_URL = "http://localhost:8000"
+API_URL = "http://localhost:8080"
 
 st.set_page_config(page_title="VASP Attribution Dashboard", layout="wide")
 

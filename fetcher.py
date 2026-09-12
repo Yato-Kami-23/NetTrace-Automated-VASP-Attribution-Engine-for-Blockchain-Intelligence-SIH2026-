@@ -11,7 +11,7 @@ SETUP REQUIRED:
 import requests
 import time
 
-ETHERSCAN_API_KEY = "YOUR_ETHERIUM_KEY"
+ETHERSCAN_API_KEY = "B1XC7VGMINXPJA2X4EQSIZSF5Z71BGYSYV"
 ETHERSCAN_BASE_URL = "https://api.etherscan.io/v2/api"  # V2 endpoint (V1 was retired)
 ETHERSCAN_CHAIN_ID = 1  # 1 = Ethereum mainnet (V2 is multichain, needs this param)
 BLOCKSTREAM_BASE_URL = "https://blockstream.info/api"
