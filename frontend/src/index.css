@@ -1,0 +1,141 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Mono", monospace;
+  --color-ink: #070a11;
+  --color-panel: #0d131f;
+  --color-raised: #141c2c;
+  --color-raised-hover: #1b263b;
+  --color-line: #223048;
+  --color-line-glow: rgba(0, 240, 255, 0.2);
+  --color-muted: #8295b0;
+  --color-text: #e2eaf5;
+  --color-text-bright: #ffffff;
+  --color-accent: #00d2ff;
+  --color-accent-glow: rgba(0, 210, 255, 0.4);
+  --color-warn: #f59e0b;
+  --color-danger: #ef4444;
+  --color-ok: #10b981;
+  --color-suspect: #eab308;
+  --color-vasp: #06b6d4;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-ink);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  overflow: hidden;
+}
+
+/* Custom Tactical Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #090e17;
+}
+::-webkit-scrollbar-thumb {
+  background: #1f2c42;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2e4161;
+}
+
+/* Scanner Animation Bar */
+.scan-bar {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 210, 255, 0.1) 30%,
+    rgba(0, 210, 255, 0.8) 50%,
+    rgba(0, 210, 255, 0.1) 70%,
+    transparent 100%
+  );
+  background-size: 50% 100%;
+  animation: scan 1.8s ease-in-out infinite;
+}
+
+@keyframes scan {
+  0% {
+    background-position: -50% 0;
+  }
+  100% {
+    background-position: 150% 0;
+  }
+}
+
+/* Radar Sweep Animation */
+.radar-sweep {
+  animation: radar-rotate 2.8s linear infinite;
+}
+
+@keyframes radar-rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Pulse Glows */
+.pulse-dot {
+  animation: pulse 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+}
+
+.mixer-pulse {
+  animation: mixerGlow 1.8s infinite;
+}
+
+@keyframes mixerGlow {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.6);
+  }
+}
+
+/* React Flow Visual Polish */
+.react-flow__controls {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+  border: 1px solid var(--color-line) !important;
+  border-radius: 6px !important;
+  overflow: hidden !important;
+}
+
+.react-flow__controls-button {
+  background: #141c2c !important;
+  border-bottom: 1px solid var(--color-line) !important;
+  fill: #8295b0 !important;
+  transition: all 0.15s ease !important;
+}
+
+.react-flow__controls-button:hover {
+  background: #1f2c42 !important;
+  fill: #00d2ff !important;
+}
+
+.react-flow__attribution {
+  display: none !important;
+}
